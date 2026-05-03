@@ -1,0 +1,28 @@
+addrmap sample {
+    name = "Sample register block";
+    desc = "Tiny addrmap used for round-trip tests.";
+
+    default regwidth = 32;
+    default sw = rw;
+    default hw = r;
+
+    reg {
+        name = "Control";
+        field {
+            sw = rw;
+            hw = r;
+        } enable[0:0] = 0;
+        field {
+            sw = rw;
+            hw = r;
+        } mode[3:1] = 0;
+    } CTRL @ 0x0;
+
+    reg {
+        name = "Status";
+        field {
+            sw = r;
+            hw = w;
+        } ready[0:0] = 0;
+    } STATUS @ 0x4;
+};

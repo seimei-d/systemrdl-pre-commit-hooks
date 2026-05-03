@@ -1,0 +1,21 @@
+addrmap ABC {
+    reg { field { sw=rw; hw=r; } DATA[31:0]; } R0 @ 0x0;
+};
+
+addrmap BCD #(
+    longint unsigned P = 0
+) {
+    reg { field { sw=rw; hw=r; } CFG[31:0]; } R0 @ 0x0;
+    reg { field { sw=rw; hw=r; } CFG[31:0]; } R1 @ 0x4;
+};
+
+mem SRAM4K {
+    mementries = 1024;
+    memwidth   = 32;
+};
+
+addrmap ss {
+    ABC          abc  @ 0x00000000;
+    BCD #(.P(7)) bcd  @ 0x00001000;
+    external SRAM4K sram @ 0x00010000;
+};

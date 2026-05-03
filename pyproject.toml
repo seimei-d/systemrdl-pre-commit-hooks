@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pre-commit-scripts"
+version = "0.1.0"
+description = "Collection of pre-commit hooks for SystemRDL / IP-XACT register-map workflows."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "pre-commit-scripts" }]
+dependencies = [
+    "systemrdl-compiler>=1.27",
+    "peakrdl-ipxact>=3.4",
+    "peakrdl-systemrdl>=0.3",
+]
+
+[project.scripts]
+systemrdl-to-ipxact = "pre_commit_scripts.systemrdl_to_ipxact.cli:main"
+asciidoc-addrmap = "pre_commit_scripts.asciidoc.cli:main"
+ipxact-to-systemrdl = "pre_commit_scripts.ipxact_to_systemrdl.cli:main"
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

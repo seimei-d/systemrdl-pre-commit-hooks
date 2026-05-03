@@ -1,0 +1,23 @@
+- id: systemrdl-to-ipxact
+  name: Convert SystemRDL to IP-XACT
+  description: Compile regmap/**/*.rdl via the peakrdl-ipxact Python API and stage the XML output.
+  entry: systemrdl-to-ipxact
+  language: python
+  files: ^regmap/.*\.rdl$
+  pass_filenames: true
+
+- id: asciidoc-addrmap
+  name: Render first-level address-map AsciiDoc table
+  description: Generate an AsciiDoc table of first-level addrmap/mem children for each regmap/**/*.rdl.
+  entry: asciidoc-addrmap
+  language: python
+  files: ^regmap/.*\.rdl$
+  pass_filenames: true
+
+- id: ipxact-to-systemrdl
+  name: Convert IP-XACT XML to SystemRDL
+  description: Import an explicit IP-XACT XML file and emit it as a SystemRDL (.rdl) source.
+  entry: ipxact-to-systemrdl
+  language: python
+  pass_filenames: false
+  always_run: true

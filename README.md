@@ -8,6 +8,7 @@ workflows: SystemRDL ⇄ IP-XACT conversion and AsciiDoc tables of address maps.
 | [`systemrdl-to-ipxact`](#systemrdl-to-ipxact) | SystemRDL → IP-XACT XML | every staged `regmap/**/*.rdl` |
 | [`asciidoc-addrmap`](#asciidoc-addrmap) | SystemRDL → AsciiDoc address-map table | every staged `regmap/**/*.rdl` |
 | [`ipxact-to-systemrdl`](#ipxact-to-systemrdl) | IP-XACT XML → SystemRDL | one explicit file pair, configured in `args` |
+| [`systemrdl-to-verilog`](#systemrdl-to-verilog) | SystemRDL → SystemVerilog register block (`peakrdl-regblock`) | every staged `regmap/**/*.rdl` |
 
 All hooks share one Python package (`pre_commit_scripts`) and one virtualenv built
 by pre-commit from `pyproject.toml` — no `additional_dependencies` needed.
@@ -202,6 +203,75 @@ data.
 
 ---
 
+## `systemrdl-to-verilog`
+
+Generates a synthesizable SystemVerilog register block (module + `_pkg`) from each
+staged `regmap/**/*.rdl` using
+[`peakrdl-regblock`](https://peakrdl-regblock.readthedocs.io/). Each RDL gets its
+own output subdirectory (named after the source stem) so that several blocks can
+coexist under one `--output-dir` without `*_pkg.sv` collisions:
+
+```
+regmap/blockA/regs.rdl  →  rtl/regmap/blockA/regs/regs.sv
+                       →  rtl/regmap/blockA/regs/regs_pkg.sv
+```
+
+### CLI flags
+
+| Flag | Default | Description |
+|---|---|---|
+| positional `FILES…` | — | RDL files to convert. Pre-commit fills these in automatically. |
+| `--input-dir DIR` | `regmap` | Source root; output paths mirror layout under it. |
+| `--output-dir DIR` | `rtl/regmap` | Where the generated `.sv` lands. |
+| `-I/--incdir DIR` | — | `` `include `` search path. Repeatable. |
+| `--exclude PATTERN` | — | fnmatch on path + basename. Repeatable. |
+| `--cpuif {apb3,apb3-flat,apb4,apb4-flat,axi4-lite,axi4-lite-flat,avalon,avalon-flat,obi,obi-flat,wishbone,wishbone-flat,passthrough}` | `apb4` | CPU interface. `-flat` variants expose plain signals instead of a SystemVerilog `interface`. |
+| `--module-name TEMPLATE` | `{name}` | Module-name template. `{name}` is replaced with the top addrmap's name (e.g. `{name}_regs`). |
+| `--package-name TEMPLATE` | `{name}_pkg` | Package-name template, same placeholders. |
+| `--reset-polarity {active-low,active-high}` | `active-low` | Default reset polarity when the RDL doesn't pin one. |
+| `--reset-sync {async,sync}` | `async` | Default reset synchronicity when the RDL doesn't pin one. |
+| `--retime-read-fanin` | off | Insert a flop in the readback fan-in path (+1 read latency). |
+| `--retime-read-response` | off | Insert a flop between the readback mux and CPU response logic (+1 read latency). |
+| `--retime-external-reg/-regfile/-mem/-addrmap` | off | Retime outputs to external components of the corresponding kind. |
+| `--hwif-report` | off | Also emit `<module>_hwif.rpt` describing `hwif_in` / `hwif_out`. |
+
+### Running on a single file
+
+The CLI accepts plain positional paths, so any `regmap/**/*.rdl` works as a
+one-shot invocation outside pre-commit:
+
+```bash
+uv run systemrdl-to-verilog regmap/blockA/regs.rdl
+# → rtl/regmap/blockA/regs/regs.sv
+# → rtl/regmap/blockA/regs/regs_pkg.sv
+```
+
+With a non-default CPU interface, a custom module name, and a custom output dir:
+
+```bash
+uv run systemrdl-to-verilog \
+    --cpuif=axi4-lite-flat \
+    --module-name='{name}_regs' \
+    --output-dir=build/rtl \
+    regmap/blockA/regs.rdl
+```
+
+### Example consumer config
+
+```yaml
+- id: systemrdl-to-verilog
+  args:
+    - --cpuif=apb4-flat
+    - --module-name={name}_regs
+    - --reset-polarity=active-low
+    - --reset-sync=async
+    - --output-dir=rtl/regs
+    - -I=lib/rdl
+    - --exclude=*_pkg.rdl
+```
+
+---
+
 ## Local development
 
 Uses [`uv`](https://docs.astral.sh/uv/):
@@ -218,6 +288,7 @@ Run any CLI directly:
 uv run systemrdl-to-ipxact regmap/foo.rdl
 uv run asciidoc-addrmap regmap/multiple_ss.rdl
 uv run ipxact-to-systemrdl --input external/foo.xml --output regmap/foo.rdl
+uv run systemrdl-to-verilog regmap/foo.rdl
 ```
 
 ### Behind a corporate PyPI mirror

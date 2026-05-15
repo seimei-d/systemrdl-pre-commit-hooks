@@ -21,3 +21,11 @@
   language: python
   pass_filenames: false
   always_run: true
+
+- id: systemrdl-to-verilog
+  name: Generate SystemVerilog register block from SystemRDL
+  description: Compile regmap/**/*.rdl via the peakrdl-regblock Python API and stage the generated SystemVerilog.
+  entry: systemrdl-to-verilog
+  language: python
+  files: ^regmap/.*\.rdl$
+  pass_filenames: true

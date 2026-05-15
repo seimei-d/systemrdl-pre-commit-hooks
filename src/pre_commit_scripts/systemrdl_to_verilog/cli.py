@@ -136,8 +136,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", type=pathlib.Path, default=pathlib.Path(DEFAULT_OUTPUT_DIR),
                    help=f"Root directory for generated SystemVerilog (default: {DEFAULT_OUTPUT_DIR}). "
                         "Each .rdl gets its own subdirectory mirroring its location under --input-dir.")
-    p.add_argument("--cpuif", choices=sorted(_CPUIF_CHOICES), default="apb4",
-                   help="CPU interface for the generated register block (default: apb4).")
+    p.add_argument("--cpuif", choices=sorted(_CPUIF_CHOICES), default="apb4-flat",
+                   help="CPU interface for the generated register block (default: apb4-flat). "
+                        "Non-flat variants reference a SystemVerilog `interface` (e.g. apb4_intf) "
+                        "that you must declare elsewhere in your design.")
     p.add_argument("--module-name", default="{name}",
                    help="Template for the SystemVerilog module name. "
                         "Use '{name}' as a placeholder for the top addrmap name (default: '{name}').")

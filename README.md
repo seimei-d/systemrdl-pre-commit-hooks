@@ -225,7 +225,7 @@ regmap/blockA/regs.rdl  →  rtl/regmap/blockA/regs/regs.sv
 | `--output-dir DIR` | `rtl/regmap` | Where the generated `.sv` lands. |
 | `-I/--incdir DIR` | — | `` `include `` search path. Repeatable. |
 | `--exclude PATTERN` | — | fnmatch on path + basename. Repeatable. |
-| `--cpuif {apb3,apb3-flat,apb4,apb4-flat,axi4-lite,axi4-lite-flat,avalon,avalon-flat,obi,obi-flat,wishbone,wishbone-flat,passthrough}` | `apb4` | CPU interface. `-flat` variants expose plain signals instead of a SystemVerilog `interface`. |
+| `--cpuif {apb3,apb3-flat,apb4,apb4-flat,axi4-lite,axi4-lite-flat,avalon,avalon-flat,obi,obi-flat,wishbone,wishbone-flat,passthrough}` | `apb4-flat` | CPU interface. `-flat` variants expose plain signals; the non-flat variants reference a SystemVerilog `interface` (e.g. `apb4_intf`) that you must declare elsewhere in your design. |
 | `--module-name TEMPLATE` | `{name}` | Module-name template. `{name}` is replaced with the top addrmap's name (e.g. `{name}_regs`). |
 | `--package-name TEMPLATE` | `{name}_pkg` | Package-name template, same placeholders. |
 | `--reset-polarity {active-low,active-high}` | `active-low` | Default reset polarity when the RDL doesn't pin one. |

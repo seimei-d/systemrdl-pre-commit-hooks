@@ -31,20 +31,22 @@ def test_default_export_writes_module_and_package(repo):
     assert (out_dir / "sample_pkg.sv").is_file()
 
 
-def test_default_apb4_cpuif_uses_interface(repo):
+def test_default_cpuif_is_apb4_flat(repo):
     rc = main(["sample.rdl"])
     assert rc == 0
     text = (repo / DEFAULT_OUTPUT_DIR / "sample" / "sample.sv").read_text()
-    # Default APB4 cpuif declares a SystemVerilog interface port.
-    assert "apb4_intf" in text
+    # Default is apb4-flat: no SystemVerilog interface port, individual signals
+    # incl. PPROT (which APB3 doesn't have).
+    assert "apb4_intf" not in text
+    assert "pprot" in text.lower()
 
 
-def test_apb4_flat_cpuif_exposes_pprot(repo):
-    rc = main(["--cpuif", "apb4-flat", "sample.rdl"])
+def test_apb4_interface_cpuif(repo):
+    rc = main(["--cpuif", "apb4", "sample.rdl"])
     assert rc == 0
     text = (repo / DEFAULT_OUTPUT_DIR / "sample" / "sample.sv").read_text()
-    # APB4 (flat) has pprot; APB3 does not.
-    assert "pprot" in text.lower()
+    # Non-flat APB4 declares a SystemVerilog interface port.
+    assert "apb4_intf" in text
 
 
 def test_axi4lite_flat_cpuif_switch(repo):

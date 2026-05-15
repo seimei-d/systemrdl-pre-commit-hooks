@@ -9,6 +9,7 @@ workflows: SystemRDL ⇄ IP-XACT conversion and AsciiDoc tables of address maps.
 | [`asciidoc-addrmap`](#asciidoc-addrmap) | SystemRDL → AsciiDoc address-map table | every staged `regmap/**/*.rdl` |
 | [`ipxact-to-systemrdl`](#ipxact-to-systemrdl) | IP-XACT XML → SystemRDL | one explicit file pair, configured in `args` |
 | [`systemrdl-to-verilog`](#systemrdl-to-verilog) | SystemRDL → SystemVerilog register block (`peakrdl-regblock`) | every staged `regmap/**/*.rdl` |
+| [`systemrdl-to-uvm`](#systemrdl-to-uvm) | SystemRDL → UVM register model (`peakrdl-uvm`) | every staged `regmap/**/*.rdl` |
 
 All hooks share one Python package (`pre_commit_scripts`) and one virtualenv built
 by pre-commit from `pyproject.toml` — no `additional_dependencies` needed.
@@ -272,6 +273,309 @@ uv run systemrdl-to-verilog \
 
 ---
 
+## `systemrdl-to-uvm`
+
+Generates a UVM register model (RAL) from each staged `regmap/**/*.rdl` using
+[`peakrdl-uvm`](https://github.com/SystemRDL/PeakRDL-uvm). Unlike the regblock
+hook (which produces a directory of synthesizable RTL), this hook writes **one
+SystemVerilog file per RDL** containing a `package` with `uvm_reg` /
+`uvm_reg_block` class definitions:
+
+```
+regmap/blockA/regs.rdl  →  dv/uvm_regmodel/blockA/regs_uvm.sv
+```
+
+The output is a *model only* — no bus adapter, no agent, no monitor. Wiring it
+into a testbench is described under [Using the generated model](#using-the-generated-model-in-a-uvm-env).
+
+### CLI flags
+
+| Flag | Default | Description |
+|---|---|---|
+| positional `FILES…` | — | RDL files to convert. Pre-commit fills these in automatically. |
+| `--input-dir DIR` | `regmap` | Source root; output paths mirror layout under it. |
+| `--output-dir DIR` | `dv/uvm_regmodel` | Where the generated `.sv` lands. |
+| `-I/--incdir DIR` | — | `` `include `` search path. Repeatable. |
+| `--exclude PATTERN` | — | fnmatch on path + basename. Repeatable. |
+| `--file-name TEMPLATE` | `{name}_uvm` | Output file-stem template. `{name}` = RDL filename stem. The same stem becomes the SystemVerilog **package** name. |
+| `--as-include` | off | Emit an includable header (no `package … endpackage` wrapper). |
+| `--no-reuse-classes` | off | Disable class-deduplication. Class names then follow each instance's hierarchical path. |
+| `--use-factory` | off | Emit `\`uvm_object_utils` + `type_id::create()` so generated classes can be overridden via the UVM factory. |
+
+### Running on a single file
+
+```bash
+uv run systemrdl-to-uvm regmap/blockA/regs.rdl
+# → dv/uvm_regmodel/blockA/regs_uvm.sv  (package regs_uvm; …)
+```
+
+With factory support and a custom file/package name:
+
+```bash
+uv run systemrdl-to-uvm \
+    --use-factory \
+    --file-name='{name}_ral' \
+    --output-dir=dv/ral \
+    regmap/blockA/regs.rdl
+# → dv/ral/blockA/regs_ral.sv  (package regs_ral; … with factory)
+```
+
+### Example consumer config
+
+```yaml
+- id: systemrdl-to-uvm
+  args:
+    - --output-dir=dv/uvm_regmodel
+    - --file-name={name}_ral
+    - --use-factory
+    - -I=lib/rdl
+    - --exclude=*_pkg.rdl
+```
+
+---
+
+## Using the generated model in a UVM env
+
+The exporter only produces a register-class hierarchy. To actually drive
+registers through your bus, you need three more things on the testbench side:
+**compile the file**, **write a bus adapter** (one-time, per bus type), and
+**wire the model into your env**. Below is a minimal end-to-end skeleton based
+on what `systemrdl-to-uvm` emits for `tests/fixtures/sample.rdl`.
+
+### 1. What the generated file looks like
+
+For an `addrmap sample` containing `CTRL` and `STATUS` regs, the hook emits a
+single file with shape:
+
+```systemverilog
+// dv/uvm_regmodel/sample_uvm.sv
+package sample_uvm;
+    `include "uvm_macros.svh"
+    import uvm_pkg::*;
+
+    class sample__CTRL extends uvm_reg;
+        rand uvm_reg_field enable;
+        rand uvm_reg_field mode;
+        function new(string name = "sample__CTRL");
+            super.new(name, 32, UVM_NO_COVERAGE);
+        endfunction
+        virtual function void build();
+            this.enable = new("enable");
+            this.enable.configure(this, 1, 0, "RW", 0, 'h0, 1, 1, 0);
+            this.mode   = new("mode");
+            this.mode  .configure(this, 3, 1, "RW", 0, 'h0, 1, 1, 0);
+        endfunction
+    endclass
+
+    class sample__STATUS extends uvm_reg; … endclass
+
+    class sample extends uvm_reg_block;
+        rand sample__CTRL   CTRL;
+        rand sample__STATUS STATUS;
+        function void build();
+            this.default_map = create_map("reg_map", 0, 4, UVM_NO_ENDIAN);
+            this.CTRL = new("CTRL");   this.CTRL.configure(this);
+            this.CTRL.build();         this.default_map.add_reg(this.CTRL,   'h0);
+            this.STATUS = new("STATUS"); this.STATUS.configure(this);
+            this.STATUS.build();       this.default_map.add_reg(this.STATUS, 'h4);
+        endfunction
+    endclass
+endpackage
+```
+
+Things to notice before going further:
+- **Package name = file stem** (here `sample_uvm`). That's why we control naming
+  via `--file-name`, not a separate `--package-name` flag — they're the same
+  knob.
+- **`UVM_NO_COVERAGE`** is hard-coded in the current exporter. Functional
+  coverage on registers needs to be added manually on top.
+- **`address bus width = 4` (bytes)** in `create_map(...)` is inferred from
+  `regwidth = 32`. Override at base address level with `set_base_addr` (see
+  below) — the offsets inside `default_map` are RDL offsets, not absolute.
+
+### 2. Compile alongside UVM
+
+It's a plain SV package. Add to your filelist:
+```
++incdir+$UVM_HOME/src
+$UVM_HOME/src/uvm.sv
+dv/uvm_regmodel/sample_uvm.sv     # generated by the hook
+dv/env/...                        # your env, agents, sequences
+```
+And in your env/test files:
+```systemverilog
+import uvm_pkg::*;
+`include "uvm_macros.svh"
+import sample_uvm::*;
+```
+
+### 3. The bus adapter (the missing piece)
+
+The exporter is bus-agnostic, so you write a `uvm_reg_adapter` once per bus
+type. It translates the abstract `uvm_reg_bus_op` ⇄ your agent's sequence item.
+For a typical APB agent with an `apb_xact` item:
+
+```systemverilog
+class apb_reg_adapter extends uvm_reg_adapter;
+    `uvm_object_utils(apb_reg_adapter)
+    function new(string name = "apb_reg_adapter");
+        super.new(name);
+        supports_byte_enable = 0;   // set 1 if your IP honors PSTRB
+        provides_responses   = 1;
+    endfunction
+
+    // UVM → bus
+    virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
+        apb_xact t = apb_xact::type_id::create("t");
+        t.addr  = rw.addr;
+        t.data  = rw.data;
+        t.write = (rw.kind == UVM_WRITE);
+        return t;
+    endfunction
+
+    // bus → UVM
+    virtual function void bus2reg(uvm_sequence_item bus_item, ref uvm_reg_bus_op rw);
+        apb_xact t;
+        if (!$cast(t, bus_item)) `uvm_fatal(get_type_name(), "bad bus item")
+        rw.kind   = t.write ? UVM_WRITE : UVM_READ;
+        rw.addr   = t.addr;
+        rw.data   = t.data;
+        rw.status = (t.resp == 0) ? UVM_IS_OK : UVM_NOT_OK;
+    endfunction
+endclass
+```
+
+For AXI4-Lite, OBI, or Wishbone the shape is identical — only the field copy
+inside `reg2bus`/`bus2reg` changes. If you already use a third-party UVC, it
+almost certainly ships its own adapter; use that one.
+
+### 4. Env: build, lock, connect, (predictor)
+
+```systemverilog
+class my_env extends uvm_env;
+    sample              regmodel;      // generated class
+    apb_agent           m_apb;
+    apb_reg_adapter     m_adapter;
+    uvm_reg_predictor#(apb_xact) m_predictor;
+    `uvm_component_utils(my_env)
+
+    function void build_phase(uvm_phase phase);
+        super.build_phase(phase);
+        m_apb      = apb_agent       ::type_id::create("m_apb",      this);
+        regmodel   = sample          ::type_id::create("regmodel",   this);
+        regmodel.build();              // populate inner uvm_reg / fields
+        regmodel.lock_model();         // freeze addresses & topology
+        m_adapter  = apb_reg_adapter ::type_id::create("m_adapter");
+        m_predictor= uvm_reg_predictor#(apb_xact)
+                     ::type_id::create("m_predictor", this);
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+        super.connect_phase(phase);
+        // 1. Route register accesses through the APB agent's sequencer.
+        regmodel.default_map.set_sequencer(m_apb.sequencer, m_adapter);
+        // 2. Place the block at its system-level address (if not at 0).
+        regmodel.default_map.set_base_addr('h4000_0000);
+        // 3. (Optional) Passive prediction: model follows what the monitor sees,
+        //    so mirror()/check() works even when other masters write.
+        m_predictor.map     = regmodel.default_map;
+        m_predictor.adapter = m_adapter;
+        m_apb.monitor.ap.connect(m_predictor.bus_in);
+    endfunction
+endclass
+```
+
+Why each line matters:
+- **`build()` then `lock_model()`** — without `lock_model`, address decoding is
+  not finalized and `mirror`/`update` will misbehave.
+- **`set_sequencer(seq, adapter)`** — this is what binds the abstract register
+  model to a real bus driver. Skip this and any `reg.write()` will hang.
+- **`set_base_addr(...)`** — RDL offsets are local to the addrmap. If the IP
+  sits at, say, `0x4000_0000` on your SoC bus, you set it here (the model has
+  no idea about system-level addressing otherwise).
+- **Predictor is optional but usually wanted**. Without it, `mirror` / `check`
+  only know about the writes the model *issued itself*. With it, the model
+  stays in sync with anything the monitor sees on the bus — needed for
+  multi-master scenarios or for trapping HW-driven changes to W1C / RC fields.
+
+### 5. Using it from sequences
+
+After all of the above, register accesses look like this:
+
+```systemverilog
+class my_seq extends uvm_sequence;
+    `uvm_object_utils(my_seq)
+    sample regmodel;     // handle passed in by the test
+
+    virtual task body();
+        uvm_status_e   status;
+        uvm_reg_data_t rd;
+
+        // Write by field (desired-value buffer + update())
+        regmodel.CTRL.enable.set(1'b1);
+        regmodel.CTRL.mode  .set(3'b011);
+        regmodel.CTRL.update(status);     // emits one APB write of CTRL
+
+        // Read & auto-check against the mirror
+        regmodel.STATUS.mirror(status, UVM_CHECK);
+
+        // Or raw read/write
+        regmodel.CTRL.read (status, rd);
+        regmodel.CTRL.write(status, 'hF);
+    endtask
+endclass
+```
+
+In the test:
+```systemverilog
+my_seq seq = my_seq::type_id::create("seq");
+seq.regmodel = env.regmodel;
+seq.start(env.m_apb.sequencer);
+```
+
+### 6. Common gotchas
+
+- **Hanging on first `write()`** → you forgot `set_sequencer(adapter)`, or
+  forgot to set the sequencer's run-phase objection handling. The model just
+  hands the item to the sequencer; if no driver picks it up, it sits forever.
+- **`mirror()` reports a mismatch for HW-only fields** → without a predictor,
+  the model doesn't know about HW-driven changes. Add the predictor, or call
+  `regmodel.STATUS.predict(value, .kind(UVM_PREDICT_READ))` manually.
+- **Two `addrmap`s collide** → with `--no-reuse-classes` class names are
+  globally unique. Without it, classes are deduplicated by lexical scope, which
+  is fine for one model per package but can surprise you if you import several
+  packages with overlapping RDL type names.
+- **Want to override a class via the UVM factory** → you must regenerate with
+  `--use-factory`. Otherwise `type_id::create()` is not emitted and factory
+  overrides have nothing to hook into.
+- **Coverage** → not emitted; the model passes `UVM_NO_COVERAGE`. If you need
+  functional cover on register fields, build a small subclass that wraps the
+  generated `uvm_reg_block` and adds `covergroup`s. Factory overrides
+  (`--use-factory`) are the cleanest way to slot the subclass in without
+  editing the generated file.
+
+### 7. Pairing with `systemrdl-to-verilog`
+
+The whole point of having both hooks is that **the same RDL drives both the
+DUT and the model**. Recommended consumer config:
+
+```yaml
+- id: systemrdl-to-verilog
+  args:
+    - --cpuif=apb4-flat
+    - --output-dir=rtl/regs
+- id: systemrdl-to-uvm
+  args:
+    - --output-dir=dv/uvm_regmodel
+    - --use-factory
+```
+
+Now any field added/moved/widened in `regmap/*.rdl` shows up in lock-step on
+both sides on the next commit — the testbench can't drift away from the DUT,
+which is the whole reason for RAL in the first place.
+
+---
+
 ## Local development
 
 Uses [`uv`](https://docs.astral.sh/uv/):
@@ -289,6 +593,7 @@ uv run systemrdl-to-ipxact regmap/foo.rdl
 uv run asciidoc-addrmap regmap/multiple_ss.rdl
 uv run ipxact-to-systemrdl --input external/foo.xml --output regmap/foo.rdl
 uv run systemrdl-to-verilog regmap/foo.rdl
+uv run systemrdl-to-uvm regmap/foo.rdl
 ```
 
 ### Behind a corporate PyPI mirror

@@ -15,6 +15,7 @@ dependencies = [
     "peakrdl-ipxact>=3.4",
     "peakrdl-systemrdl>=0.3",
     "peakrdl-regblock>=1.0",
+    "peakrdl-uvm>=2.3",
 ]
 
 [project.scripts]
@@ -22,6 +23,7 @@ systemrdl-to-ipxact = "pre_commit_scripts.systemrdl_to_ipxact.cli:main"
 asciidoc-addrmap = "pre_commit_scripts.asciidoc.cli:main"
 ipxact-to-systemrdl = "pre_commit_scripts.ipxact_to_systemrdl.cli:main"
 systemrdl-to-verilog = "pre_commit_scripts.systemrdl_to_verilog.cli:main"
+systemrdl-to-uvm = "pre_commit_scripts.systemrdl_to_uvm.cli:main"
 
 [project.optional-dependencies]
 test = ["pytest>=7"]

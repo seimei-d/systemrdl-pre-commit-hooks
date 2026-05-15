@@ -29,3 +29,11 @@
   language: python
   files: ^regmap/.*\.rdl$
   pass_filenames: true
+
+- id: systemrdl-to-uvm
+  name: Generate UVM register model from SystemRDL
+  description: Compile regmap/**/*.rdl via the peakrdl-uvm Python API and stage the generated UVM RAL package.
+  entry: systemrdl-to-uvm
+  language: python
+  files: ^regmap/.*\.rdl$
+  pass_filenames: true
